@@ -2,6 +2,11 @@
 
 Windows 上用的轻量待办清单，PySide6 + qfluentwidgets 写的 Fluent 风格界面，单文件 exe 便携运行，数据存在本地 SQLite。
 
+## 下载
+
+现成 exe 见 Releases：<https://github.com/zero6363/todo/releases/latest>
+（`qing-daiban-v1.4.3.exe` 双击即用，首次启动在同目录生成 `data` 目录）。
+
 ## 功能
 
 - **中文语义添加**：`十点开会`、`1小时后 关火`、`每三天十点 浇花`、`每周一 十点 周会`、`每月15号 交房租`、`!!` 标记优先级，输入框下方实时显示彩色胶囊（日期 / 重复 / 优先级）。
