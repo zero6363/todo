@@ -1,0 +1,19 @@
+# Python / PyInstaller
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.spec.bak
+
+# 运行时数据（数据库、日志、图标缓存）
+data/
+*.db
+*.db-journal
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
