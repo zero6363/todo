@@ -8,7 +8,7 @@ from pathlib import Path
 
 APP_NAME = "轻待办"
 APP_ID = "LightTodo.App"
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 
 # 只给日期、没给具体时间时的默认时刻（同时作为提醒时刻）
 DEFAULT_DUE_CLOCK = "14:00"
