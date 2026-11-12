@@ -30,7 +30,6 @@ from .detail_panel import DetailPanel
 from .reminder_popup import ReminderPopup
 from .settings_page import SettingsPage
 from .task_page import TaskPage
-from .taskbar_badge import TaskbarBadge
 from .tray import TrayIcon
 
 log = logging.getLogger("lighttodo")
@@ -88,7 +87,6 @@ class MainWindow(FluentWindow):
         self.select_view("all")
         self._last_page_index = self.stackedWidget.indexOf(self.pages["all"])
         self.navigationInterface.expand(useAni=False)
-        self._badge = TaskbarBadge(self._base_icon)
         self._start_services()
         self._restore_geometry()
         self.refresh_all()
@@ -231,20 +229,6 @@ class MainWindow(FluentWindow):
         self.setWindowTitle(f"{config.APP_NAME} · 今天 {today} 项")
         if hasattr(self, "tray"):
             self.tray.set_today_count(today)
-        try:
-            self._badge.set_count(int(self.winId()), today, window=self)
-        except Exception:
-            pass
-
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名
-        super().showEvent(event)
-        # 窗口显示后重新挂角标（最小化到托盘再恢复时任务栏按钮会重建）
-        try:
-            self._badge._last_count = None  # 强制刷新
-            counts = self.db.counts()
-            self._badge.set_count(int(self.winId()), counts.get("today", 0), window=self)
-        except Exception:
-            pass
 
     def current_page(self) -> TaskPage | None:
         page = self.stackedWidget.currentWidget()
