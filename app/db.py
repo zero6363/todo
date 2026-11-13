@@ -330,7 +330,11 @@ class Database:
         while next_day < today and guard < 500:
             next_day = utils.next_repeat_date(rule, next_day)
             guard += 1
-        if next_day == today and row["due_time"]:
+        # 「每天 / 工作日 / 每 N 天」这类习惯型循环：补做昨天（或更早）的任务时，
+        # 今天这一次仍要保留，不能因为今天的时间点已过就跳到明天，否则今天就“没任务”了。
+        kind, _, rest = rule.partition(":")
+        daily_like = kind in ("daily", "weekdays") or (kind == "interval" and rest.endswith(":day"))
+        if next_day == today and row["due_time"] and not daily_like:
             if row["due_time"] <= datetime.now().strftime("%H:%M"):
                 next_day = utils.next_repeat_date(rule, next_day)
         next_date = next_day.isoformat()

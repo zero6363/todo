@@ -98,8 +98,27 @@ class MainWindow(FluentWindow):
         self._pump_timer.timeout.connect(self._pump)
         self._pump_timer.start(250)
 
+        # 跨天检测：常驻托盘过夜后，标题/角标/列表要自动跟着新日期走
+        self._today_seen = date.today()
+        self._day_timer = QTimer(self)
+        self._day_timer.timeout.connect(self._check_day_changed)
+        self._day_timer.start(30_000)
+
         if start_minimized:
             self.hide()
+
+    def _check_day_changed(self) -> None:
+        """发现日期变了就顺延过期任务并整体刷新（标题、托盘角标、列表）。"""
+        current = date.today()
+        if current == self._today_seen:
+            return
+        self._today_seen = current
+        try:
+            moved = self.db.rollover()
+            log.info("跨天刷新：%s，顺延 %s 项", current, moved)
+        except Exception as exc:
+            log.warning("跨天顺延失败: %s", exc)
+        self.refresh_all()
 
     def _bind_shortcuts(self) -> None:
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self.new_task)
@@ -271,6 +290,8 @@ class MainWindow(FluentWindow):
         self._last_page_index = index
         if isinstance(page, TaskPage):
             page.refresh()
+        # 切页时顺带刷新标题与托盘角标，避免跨天/隔夜后数字不一致
+        self.refresh_counts()
 
     def _revert_page(self) -> None:
         self._reverting_page = True
@@ -712,10 +733,13 @@ class MainWindow(FluentWindow):
             page.focus_input()
 
     def show_window(self) -> None:
+        # 从托盘唤回时先做一次跨天检查，避免隔夜后显示旧数字
+        self._check_day_changed()
         self.showNormal()
         self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
         self.raise_()
         self.activateWindow()
+        self.refresh_current()
 
     def _save_geometry(self) -> None:
         try:
