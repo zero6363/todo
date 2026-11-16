@@ -199,7 +199,8 @@ class ReminderPopup(QWidget):
 
     def _custom_snooze(self) -> None:
         self._auto_close.stop()
-        minutes = dialogs.ask_snooze_minutes(self._dialog_parent or self, config.SNOOZE_DEFAULT)
+        # 主窗口在托盘里或最小化时，对话框会自动改成独立浮层弹在屏幕中央
+        minutes = dialogs.ask_snooze_minutes(self._dialog_parent, config.SNOOZE_DEFAULT)
         if minutes:
             self._snooze(minutes)
         elif not self._closing:

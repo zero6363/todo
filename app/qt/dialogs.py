@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIntValidator
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     CaptionLabel,
     LineEdit,
     MessageBoxBase,
+    PrimaryPushButton,
     PushButton,
     SubtitleLabel,
 )
@@ -186,6 +195,114 @@ class SnoozeDialog(MessageBoxBase):
         super().accept()
 
 
+class FloatingSnoozeDialog(QDialog):
+    """独立浮层版「自定义稍后提醒」。
+
+    主窗口收进托盘隐藏时使用：不依赖任何父窗口，自己在屏幕中央弹出。
+    """
+
+    def __init__(self, default: int = 10, maximum: int = 10080):
+        super().__init__(None)
+        self.minutes: int | None = None
+        self.maximum = maximum
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setModal(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(26, 22, 26, 26)
+
+        card = QFrame(self)
+        card.setObjectName("snoozeCard")
+        card.setStyleSheet(
+            "#snoozeCard { background:#FFFFFF; border:1px solid "
+            f"{theme.BORDER}; border-radius:10px; }}"
+        )
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(48)
+        shadow.setOffset(0, 10)
+        shadow.setColor(QColor(0, 0, 0, 90))
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card)
+
+        body = QVBoxLayout(card)
+        body.setContentsMargins(22, 18, 22, 16)
+        body.setSpacing(8)
+
+        body.addWidget(SubtitleLabel("稍后提醒", card))
+        hint = CaptionLabel("多久之后再提醒我？", card)
+        hint.setStyleSheet(f"color:{theme.TEXT_SUB};")
+        body.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.amount_edit = LineEdit(card)
+        self.amount_edit.setValidator(QIntValidator(1, maximum, self))
+        self.amount_edit.setText(str(default))
+        self.amount_edit.setFixedWidth(88)
+        self.amount_edit.setMinimumHeight(32)
+        self.amount_edit.setAlignment(Qt.AlignCenter)
+        row.addWidget(self.amount_edit)
+        unit = CaptionLabel("分钟", card)
+        unit.setStyleSheet(f"color:{theme.TEXT_SUB};")
+        row.addWidget(unit)
+        row.addSpacing(6)
+        for label, minutes in config.SNOOZE_OPTIONS:
+            button = PushButton(label, card)
+            button.setFixedWidth(74)
+            button.setMinimumHeight(32)
+            button.clicked.connect(
+                lambda _=False, m=minutes: self.amount_edit.setText(str(m))
+            )
+            row.addWidget(button)
+        row.addStretch(1)
+        body.addLayout(row)
+
+        tip = CaptionLabel(f"可填 1 ~ {maximum} 分钟（最长 7 天），也可以点快捷选项", card)
+        tip.setStyleSheet(f"color:{theme.TEXT_MUTED};")
+        body.addWidget(tip)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = PushButton("取消", card)
+        cancel.setFixedWidth(88)
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        ok = PrimaryPushButton("确定", card)
+        ok.setFixedWidth(88)
+        ok.clicked.connect(self.accept)
+        buttons.addWidget(ok)
+        body.addLayout(buttons)
+
+        self.amount_edit.returnPressed.connect(self.accept)
+        self.setFixedWidth(500)
+        self.adjustSize()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # 弹在鼠标所在屏幕的中央，并抢到最前面
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            self.move(geo.center() - self.rect().center())
+        self.raise_()
+        self.activateWindow()
+        self.amount_edit.setFocus()
+        self.amount_edit.selectAll()
+
+    def accept(self) -> None:
+        try:
+            value = int(self.amount_edit.text().strip())
+        except ValueError:
+            value = 0
+        if not 1 <= value <= self.maximum:
+            self.amount_edit.setFocus()
+            self.amount_edit.selectAll()
+            return
+        self.minutes = value
+        super().accept()
+
+
 def ask_confirm(parent, title: str, content: str, ok_text: str = "确定") -> bool:
     dialog = ConfirmDialog(parent, title, content, ok_text)
     result = bool(dialog.exec())
@@ -203,7 +320,12 @@ def ask_save_changes(parent) -> str:
 
 
 def ask_snooze_minutes(parent, default: int = 10) -> int | None:
-    dialog = SnoozeDialog(parent, default=default)
+    """自定义稍后提醒。
+
+    父窗口不可见、最小化或在托盘里时，改用独立浮层，避免对话框弹不出来。
+    """
+    usable = parent is not None and parent.isVisible() and not parent.isMinimized()
+    dialog = SnoozeDialog(parent, default=default) if usable else FloatingSnoozeDialog(default)
     ok = bool(dialog.exec())
     minutes = dialog.minutes
     dialog.deleteLater()
