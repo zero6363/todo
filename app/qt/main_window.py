@@ -104,8 +104,19 @@ class MainWindow(FluentWindow):
         self._day_timer.timeout.connect(self._check_day_changed)
         self._day_timer.start(30_000)
 
+        # 预热日期浮层，第一次点日期就能立刻弹出
+        QTimer.singleShot(1200, self._prewarm_calendar)
+
         if start_minimized:
             self.hide()
+
+    def _prewarm_calendar(self) -> None:
+        try:
+            from .calendar_flyout import prewarm
+
+            prewarm(self.detail.calendar)
+        except Exception:
+            pass
 
     def _check_day_changed(self) -> None:
         """发现日期变了就顺延过期任务并整体刷新（标题、托盘角标、列表）。"""
