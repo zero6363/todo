@@ -9,7 +9,6 @@ from html import escape
 from PySide6.QtCore import QDate, QTime, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    CalendarPicker,
     CaptionLabel,
     CheckBox,
     ComboBox,
@@ -27,6 +26,7 @@ from qfluentwidgets import (
 
 from .. import config, utils
 from . import theme
+from .calendar_flyout import StableCalendarPicker
 
 MANUAL_PLACEHOLDER = "手动输入：明天十点 / 11-20 15:30 / 1小时后"
 MANUAL_FAILED = "没识别出来，试试「明天十点」「1小时后」「11-20 15:30」"
@@ -96,7 +96,7 @@ class DetailPanel(QFrame):
         layout.addWidget(self._label("截止日期"))
         date_row = QHBoxLayout()
         date_row.setSpacing(5)
-        self.calendar = CalendarPicker()
+        self.calendar = StableCalendarPicker()
         self.calendar.dateChanged.connect(self._on_date_changed)
         date_row.addWidget(self.calendar, 1)
         for text, delta in (("今天", 0), ("明天", 1)):
