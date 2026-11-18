@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     remind_offset INTEGER,
     remind_at     TEXT,
     reminded      INTEGER NOT NULL DEFAULT 0,
+    nag_at        TEXT,
     priority      INTEGER NOT NULL DEFAULT 0,
     completed     INTEGER NOT NULL DEFAULT 0,
     completed_at  TEXT,
@@ -134,6 +135,12 @@ class Database:
             columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(tasks)")}
             if "repeat_rule" not in columns:
                 self.conn.execute("ALTER TABLE tasks ADD COLUMN repeat_rule TEXT")
+            if "nag_at" not in columns:
+                self.conn.execute("ALTER TABLE tasks ADD COLUMN nag_at TEXT")
+            # 老库先补列，索引建在补列之后
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_nag ON tasks (completed, nag_at)"
+            )
             self.conn.commit()
 
     def _ensure_defaults(self) -> None:
@@ -283,10 +290,16 @@ class Database:
             if merged["title"] is not None:
                 merged["title"] = str(merged["title"]).strip() or row["title"]
 
+            # 截止时间或完成状态变了，之前的「过期重复提醒」计划作废，稍后按新时间重排
+            due_changed = (
+                merged["due_date"] != row["due_date"] or merged["due_time"] != row["due_time"]
+            )
+            nag_at = None if (due_changed or int(merged["completed"] or 0)) else row["nag_at"]
+
             self.conn.execute(
                 "UPDATE tasks SET title = ?, notes = ?, list_id = ?, due_date = ?, due_time = ?,"
                 " remind_offset = ?, remind_at = ?, reminded = ?, priority = ?, repeat_rule = ?,"
-                " updated_at = ? WHERE id = ?",
+                " nag_at = ?, updated_at = ? WHERE id = ?",
                 (
                     merged["title"],
                     merged["notes"] or "",
@@ -298,6 +311,7 @@ class Database:
                     reminded,
                     int(merged["priority"] or 0),
                     merged.get("repeat_rule") or None,
+                    nag_at,
                     now_str(),
                     task_id,
                 ),
@@ -374,7 +388,8 @@ class Database:
                 remind_at = row["remind_at"]
                 reminded = 0 if remind_at and remind_at > datetime.now().strftime("%Y-%m-%d %H:%M") else 1
             self.conn.execute(
-                "UPDATE tasks SET completed = ?, completed_at = ?, reminded = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET completed = ?, completed_at = ?, reminded = ?, nag_at = NULL,"
+                " updated_at = ? WHERE id = ?",
                 (done, now_str() if done else None, reminded, now_str(), task_id),
             )
             spawned = self._spawn_repeat_next(row) if done else None
@@ -388,7 +403,7 @@ class Database:
             if row is None:
                 return None
             self.conn.execute(
-                "UPDATE tasks SET completed = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET completed = ?, completed_at = ?, nag_at = NULL, updated_at = ? WHERE id = ?",
                 (1 if done else 0, now_str() if done else None, now_str(), task_id),
             )
             spawned = None
@@ -513,7 +528,7 @@ class Database:
                 self.conn.execute(
                     "UPDATE tasks SET due_date = ?, defer_count = defer_count + 1,"
                     " orig_due_date = COALESCE(orig_due_date, due_date),"
-                    " remind_at = ?, reminded = ?, updated_at = ? WHERE id = ?",
+                    " remind_at = ?, reminded = ?, nag_at = NULL, updated_at = ? WHERE id = ?",
                     (today, remind_at, reminded, now_str(), row["id"]),
                 )
                 moved += 1
@@ -542,9 +557,61 @@ class Database:
         moment = datetime.now() + timedelta(minutes=int(minutes))
         with self._lock:
             self.conn.execute(
-                "UPDATE tasks SET remind_at = ?, reminded = 0, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET remind_at = ?, reminded = 0, nag_at = NULL, updated_at = ? WHERE id = ?",
                 (moment.strftime("%Y-%m-%d %H:%M"), now_str(), task_id),
             )
+            self.conn.commit()
+
+    # -------------------------------------------------- 过期重复提醒
+
+    def arm_repeat_reminders(self, interval_minutes: int, at: datetime | None = None) -> int:
+        """给「已过期、未完成、开了提醒、还没排重复提醒」的任务排下一次提醒。
+
+        返回本次新排入的任务数。只对开了提醒（remind_at 非空）的任务生效，
+        用户特意选了「不提醒」的任务不会被反复打扰。
+        """
+        moment = at or datetime.now()
+        next_at = (moment + timedelta(minutes=int(interval_minutes))).strftime("%Y-%m-%d %H:%M")
+        today = moment.strftime("%Y-%m-%d")
+        clock = moment.strftime("%H:%M")
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE tasks SET nag_at = ?"
+                " WHERE completed = 0 AND nag_at IS NULL AND remind_at IS NOT NULL"
+                " AND due_date IS NOT NULL"
+                " AND (due_date < ? OR (due_date = ? AND COALESCE(due_time, '23:59') < ?))",
+                (next_at, today, today, clock),
+            )
+            self.conn.commit()
+            return int(cur.rowcount or 0)
+
+    def due_repeat_reminders(self, at: datetime | None = None) -> list[sqlite3.Row]:
+        """到点的过期重复提醒。"""
+        moment = (at or datetime.now()).strftime("%Y-%m-%d %H:%M")
+        with self._lock:
+            return self.conn.execute(
+                "SELECT t.*, l.name AS list_name, l.color AS list_color"
+                " FROM tasks t LEFT JOIN lists l ON l.id = t.list_id"
+                " WHERE t.completed = 0 AND t.nag_at IS NOT NULL AND t.nag_at <= ?"
+                " ORDER BY t.nag_at ASC LIMIT 10",
+                (moment,),
+            ).fetchall()
+
+    def mark_nagged(self, task_id: int, interval_minutes: int, at: datetime | None = None) -> None:
+        """记一次过期提醒，并把下一次往后推 interval 分钟。"""
+        moment = at or datetime.now()
+        next_at = (moment + timedelta(minutes=int(interval_minutes))).strftime("%Y-%m-%d %H:%M")
+        with self._lock:
+            self.conn.execute(
+                "UPDATE tasks SET nag_at = ? WHERE id = ? AND completed = 0",
+                (next_at, task_id),
+            )
+            self.conn.commit()
+
+    def clear_repeat_reminders(self) -> None:
+        """关掉「过期重复提醒」时清空所有计划，避免再打开时立刻补弹一堆旧提醒。"""
+        with self._lock:
+            self.conn.execute("UPDATE tasks SET nag_at = NULL WHERE nag_at IS NOT NULL")
             self.conn.commit()
 
     def clear_completed(self) -> int:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import date
 from typing import Callable
@@ -10,6 +11,8 @@ from . import config, utils
 from .db import Database
 from .notifier import Notifier
 from .sound import play_alert as sound_alert
+
+log = logging.getLogger("lighttodo")
 
 
 class ReminderService(threading.Thread):
@@ -34,11 +37,13 @@ class ReminderService(threading.Thread):
         self._stop_event.set()
 
     def run(self) -> None:
+        log.info("提醒服务启动，检查间隔 %.0f 秒", self._interval)
         while not self._stop_event.wait(self._interval):
             try:
                 self.tick()
             except Exception:
-                # 后台线程不允许崩掉整个应用
+                # 后台线程不允许崩掉整个应用，但异常要留痕
+                log.exception("提醒检查失败")
                 continue
 
     # -------------------------------------------------- 单次检查
@@ -56,19 +61,46 @@ class ReminderService(threading.Thread):
         use_toast = mode in ("toast", "both")
         use_popup = mode in ("popup", "both") and self.on_reminder is not None
 
+        # 1）正常到点提醒
         for task in self._db.due_reminders():
-            task_id = int(task["id"])
-            self._db.mark_reminded(task_id)
-            body = f"{utils.describe_due(task['due_date'], task['due_time'])}"
-            if task["list_name"]:
-                body = f"{body} · {task['list_name']}"
-            if use_toast:
-                # 系统通知自带声音；只在纯弹窗模式下自己补一声
-                self._notifier.show(task["title"], body, sound=sound)
-            elif use_popup and sound:
-                sound_alert()
-            if use_popup:
-                self._post(lambda tid=task_id: self.on_reminder(tid))
+            self._db.mark_reminded(int(task["id"]))
+            self._notify(task, use_toast, use_popup, sound)
+
+        # 2）过期后未处理：每隔一段时间再提醒一次
+        repeat_on, minutes = self._repeat_settings()
+        if repeat_on and (use_toast or use_popup):
+            self._db.arm_repeat_reminders(minutes)
+            for task in self._db.due_repeat_reminders():
+                self._db.mark_nagged(int(task["id"]), minutes)
+                self._notify(task, use_toast, use_popup, sound, repeat=True)
+
+    def _repeat_settings(self) -> tuple[bool, int]:
+        """读「过期重复提醒」开关与间隔（分钟）。"""
+        on = self._db.get_setting("repeat_remind", config.DEFAULTS["repeat_remind"]) == "1"
+        try:
+            minutes = int(self._db.get_setting(
+                "repeat_remind_minutes", str(config.REPEAT_REMIND_DEFAULT)
+            ))
+        except (TypeError, ValueError):
+            minutes = config.REPEAT_REMIND_DEFAULT
+        if minutes <= 0:
+            minutes = config.REPEAT_REMIND_DEFAULT
+        return on, minutes
+
+    def _notify(self, task, use_toast: bool, use_popup: bool, sound: bool, repeat: bool = False) -> None:
+        task_id = int(task["id"])
+        body = utils.describe_due(task["due_date"], task["due_time"])
+        if repeat:
+            body = f"已过期 · {body}"
+        if task["list_name"]:
+            body = f"{body} · {task['list_name']}"
+        if use_toast:
+            # 系统通知自带声音；只在纯弹窗模式下自己补一声
+            self._notifier.show(task["title"], body, sound=sound)
+        elif use_popup and sound:
+            sound_alert()
+        if use_popup:
+            self._post(lambda tid=task_id: self.on_reminder(tid))
 
     def check_now(self) -> None:
         """让 UI 手动触发一次检查（如设置里点"测试提醒"）。"""

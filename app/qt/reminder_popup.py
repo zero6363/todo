@@ -82,8 +82,11 @@ class ReminderPopup(QWidget):
 
         top = QHBoxLayout()
         top.setSpacing(6)
-        tag = CaptionLabel("任务提醒")
-        tag.setStyleSheet(f"color:{theme.ACCENT};font-weight:600;")
+        overdue = utils.is_overdue(task["due_date"], task["due_time"])
+        tag = CaptionLabel("已过期" if overdue else "任务提醒")
+        tag.setStyleSheet(
+            f"color:{theme.DANGER if overdue else theme.ACCENT};font-weight:600;"
+        )
         top.addWidget(tag)
         top.addStretch(1)
         close_button = TransparentToolButton(FIF.CLOSE)

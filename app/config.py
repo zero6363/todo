@@ -8,7 +8,7 @@ from pathlib import Path
 
 APP_NAME = "轻待办"
 APP_ID = "LightTodo.App"
-APP_VERSION = "1.4.9"
+APP_VERSION = "1.5.0"
 
 # 只给日期、没给具体时间时的默认时刻（同时作为提醒时刻）
 DEFAULT_DUE_CLOCK = "14:00"
@@ -125,6 +125,17 @@ SNOOZE_OPTIONS: list[tuple[str, int]] = [
 SNOOZE_DEFAULT = 10
 SNOOZE_MAX = 10080  # 7 天
 
+# 过期后未完成任务的重复提醒间隔（分钟）
+REPEAT_REMIND_OPTIONS: list[tuple[str, int]] = [
+    ("15 分钟", 15),
+    ("30 分钟", 30),
+    ("1 小时", 60),
+    ("2 小时", 120),
+]
+REPEAT_REMIND_LABELS = [label for label, _ in REPEAT_REMIND_OPTIONS]
+REPEAT_REMIND_VALUES = {label: minutes for label, minutes in REPEAT_REMIND_OPTIONS}
+REPEAT_REMIND_DEFAULT = 30
+
 # 循环任务：(标签, 规则)。规则约定见 utils.next_repeat_date
 REPEAT_OPTIONS: list[tuple[str, str | None]] = [
     ("不重复", None),
@@ -161,4 +172,6 @@ DEFAULTS = {
     "notify_mode": "popup",
     "notify_sound": "1",
     "always_on_top": "0",
+    "repeat_remind": "1",
+    "repeat_remind_minutes": "30",
 }

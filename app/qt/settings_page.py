@@ -70,8 +70,31 @@ class SettingsPage(QWidget):
         )
         self.test_card.clicked.connect(controller.test_notification)
 
+        self.repeat_card = SwitchSettingCard(
+            FIF.SYNC,
+            "过期后重复提醒",
+            "过了截止时间还没完成，就每隔一段时间再提醒一次，直到完成或稍后",
+            None,
+            remind_group,
+        )
+        self.repeat_card.checkedChanged.connect(self._on_repeat_switch)
+
+        self.repeat_interval_card = SettingCard(
+            FIF.STOP_WATCH, "重复间隔", "过期任务每隔多久再提醒一次", remind_group
+        )
+        repeat_combo = ComboBox(self.repeat_interval_card)
+        for label in config.REPEAT_REMIND_LABELS:
+            repeat_combo.addItem(label)
+        repeat_combo.setMinimumWidth(120)
+        repeat_combo.currentIndexChanged.connect(self._on_repeat_interval)
+        self.repeat_interval_card.hBoxLayout.addWidget(repeat_combo, 0, Qt.AlignRight)
+        self.repeat_interval_card.hBoxLayout.addSpacing(16)
+        self.repeat_interval_combo = repeat_combo
+
         remind_group.addSettingCard(self.notify_card)
         remind_group.addSettingCard(self.sound_card)
+        remind_group.addSettingCard(self.repeat_card)
+        remind_group.addSettingCard(self.repeat_interval_card)
         remind_group.addSettingCard(self.test_card)
 
         # 常规
@@ -131,6 +154,20 @@ class SettingsPage(QWidget):
         self.notify_mode_combo.blockSignals(False)
 
         self.sound_card.setChecked(self.db.get_setting("notify_sound", "1") == "1")
+        self.repeat_card.setChecked(
+            self.db.get_setting("repeat_remind", config.DEFAULTS["repeat_remind"]) == "1"
+        )
+        try:
+            minutes = int(self.db.get_setting("repeat_remind_minutes", "30"))
+        except (TypeError, ValueError):
+            minutes = config.REPEAT_REMIND_DEFAULT
+        label = next(
+            (text for text, value in config.REPEAT_REMIND_OPTIONS if value == minutes),
+            config.REPEAT_REMIND_LABELS[1],
+        )
+        self.repeat_interval_combo.blockSignals(True)
+        self.repeat_interval_combo.setCurrentIndex(config.REPEAT_REMIND_LABELS.index(label))
+        self.repeat_interval_combo.blockSignals(False)
         self.tray_card.setChecked(self.db.get_setting("close_to_tray", "1") == "1")
         self.top_card.setChecked(self.db.get_setting("always_on_top", "0") == "1")
         self.autostart_card.setChecked(autostart.is_enabled())
@@ -144,6 +181,17 @@ class SettingsPage(QWidget):
         label = self.notify_mode_combo.itemText(index)
         mode = config.NOTIFY_MODE_VALUES.get(label, "popup")
         self.db.set_setting("notify_mode", mode)
+
+    def _on_repeat_interval(self, index: int) -> None:
+        label = self.repeat_interval_combo.itemText(index)
+        minutes = config.REPEAT_REMIND_VALUES.get(label, config.REPEAT_REMIND_DEFAULT)
+        self.db.set_setting("repeat_remind_minutes", str(minutes))
+
+    def _on_repeat_switch(self, checked: bool) -> None:
+        self._save_switch("repeat_remind", checked)
+        if not checked:
+            # 关掉时清空待发的过期提醒，免得下次打开开关时补弹一堆旧提醒
+            self.db.clear_repeat_reminders()
 
     def _on_autostart(self, checked: bool) -> None:
         if checked:
